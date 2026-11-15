@@ -75,7 +75,8 @@ class Config:
     smtp_username: str = field(default="", repr=False)
     smtp_password: str = field(default="", repr=False)
     email_to: str = field(default="", repr=False)
-    poll_seconds: int = 1800
+    poll_seconds_min: int = 1800
+    poll_seconds_max: int = 3600
     cooldown_seconds: int = 86400
     max_retries: int = 3
     max_checks: int = 24
@@ -120,7 +121,10 @@ class Config:
                 raise SafetyError("Daily times must be HH:MM in Beijing time.")
         if not 0 <= self.max_retries <= 3:
             raise SafetyError("Recovery retries must be between zero and three.")
-        if min(self.poll_seconds, self.cooldown_seconds, self.max_checks,
+        if (type(self.poll_seconds_min) is not int or type(self.poll_seconds_max) is not int
+                or not 0 < self.poll_seconds_min <= self.poll_seconds_max):
+            raise SafetyError("Polling bounds must be positive integers with POLL_SECONDS_MIN <= POLL_SECONDS_MAX.")
+        if min(self.cooldown_seconds, self.max_checks,
                self.manual_timeout, self.page_timeout, self.queue_timeout) <= 0:
             raise SafetyError("Timeouts and operational budgets must be positive.")
         if not 0 <= self.max_auto_verifications <= 1:

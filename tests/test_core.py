@@ -35,7 +35,8 @@ def configuration(root, **changes):
         ranges=(("2026-12-22", "2026-12-25"), ("2026-12-01", "2026-12-15")),
         smtp_host="smtp.invalid", smtp_username="sender@example.invalid",
         smtp_password="not-a-secret", email_to="recipient@example.invalid",
-        poll_seconds=1, cooldown_seconds=2, max_checks=2, manual_timeout=2, page_timeout=2,
+        poll_seconds_min=1, poll_seconds_max=1, cooldown_seconds=2,
+        max_checks=2, manual_timeout=2, page_timeout=2,
     )
     return replace(base, **changes)
 
@@ -82,6 +83,16 @@ class CoreTests(RuntimeTest):
         for value in ("not a date", "2026-02-30", "2026-12-01junk"):
             with self.assertRaises(SafetyError):
                 parse_day(value)
+
+    def test_poll_bounds_require_positive_ordered_integers(self):
+        for minimum, maximum in ((0, 5), (-1, 5), (5, 0), (5, 4), (True, 5), (1, False), (1.5, 5), (1, 5.5)):
+            with self.subTest(minimum=minimum, maximum=maximum):
+                config = replace(self.config, poll_seconds_min=minimum, poll_seconds_max=maximum)
+                with self.assertRaises(SafetyError):
+                    config.validate(today=date(2026, 11, 15))
+        for minimum, maximum in ((1, 1), (2, 5)):
+            replace(self.config, poll_seconds_min=minimum, poll_seconds_max=maximum).validate(
+                today=date(2026, 11, 15))
 
     def test_submission_latch_survives_restart_and_duplicate_dispatch(self):
         slot = Slot("2026-12-01", "08:30", "2", 7)

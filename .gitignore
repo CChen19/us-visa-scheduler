@@ -11,3 +11,6 @@ logs/
 latest_logs/
 archived_logs/
 downloaded_files/
+Set-VisaEnvironment.local.ps1
+personal/
+.vs

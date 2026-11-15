@@ -60,9 +60,57 @@ Installation and driver provisioning require network access.
 
 ## Configure the beginning of `main.py`
 
-All operational settings are in its opening section. Do not put real secrets in
-tracked source files. Environment variables are local process inputs, **not an
-encrypted secret vault**; protect the machine/session and local files.
+The sixteen settings below read environment variables first. If a variable is
+absent, the second argument of its `os.environ.get(...)` expression in `main.py`
+is the fallback. Edit that fallback if needed without removing the environment
+lookup. Existing environment values win over file edits. Settings are loaded when
+Python starts; changing the shell afterward does not change a running process.
+
+Environment values are strings. `build_config()` converts booleans, integers, and
+JSON into the correct types before validation. Invalid or present-but-empty
+structured values cause an explicit error rather than silently using a fallback.
+In particular, `"false"` does **not** enable booking.
+
+| Property | Environment variable | Format / fallback when absent |
+|---|---|---|
+| `USERNAME` | `VISA_USERNAME` | String; empty fallback. |
+| `PASSWORD` | `VISA_PASSWORD` | Visa password; empty fallback. |
+| `SECURITY_ANSWERS` | `VISA_SECURITY_ANSWERS` | JSON question-to-answer object; fallback map in `main.py`, initially empty. Replaces the whole map, not a merge. |
+| `EXPECTED_APPLICANTS` | `VISA_APPLICANTS` | Exact names separated by `;`; empty list fallback. |
+| `EXPECTED_VISA_CLASS` | `VISA_VISA_CLASS` | `B1/B2` or `B2`; fallback `B1/B2`. |
+| `EXPECTED_EXISTING_APPOINTMENT` | `VISA_EXISTING_APPOINTMENT` | Beijing ISO datetime; empty fallback. |
+| `PREFERRED_DATE_RANGES` | `VISA_PREFERRED_DATE_RANGES` | JSON array of `[start, end]` pairs; example ranges in `main.py` are the fallback. |
+| `AUTO_BOOKING` | `VISA_AUTO_BOOKING` | `true`/`false` or `1`/`0`, case-insensitive; fallback `False`. |
+| `DAILY_EMAIL_TIMES` | `VISA_DAILY_EMAIL_TIMES` | JSON array of three Beijing HH:MM strings; fallback `["08:00","12:00","17:00"]`. |
+| `POLL_SECONDS_MIN` | `VISA_POLL_SECONDS_MIN` | Positive integer seconds; inclusive lower bound, fallback `1800`. |
+| `POLL_SECONDS_MAX` | `VISA_POLL_SECONDS_MAX` | Positive integer seconds, at least the minimum; inclusive upper bound, fallback `3600`. |
+| `SMTP_HOST` | `VISA_SMTP_HOST` | Hostname; fallback `smtp.gmail.com`. |
+| `SMTP_PORT` | `VISA_SMTP_PORT` | Integer string; fallback `465` (implicit TLS). |
+| `SMTP_USERNAME` | `VISA_EMAIL_SENDER` | Full sending email address; empty fallback. |
+| `SMTP_PASSWORD` | `VISA_SMTP_PASSWORD` | SMTP app password; empty fallback. |
+| `EMAIL_TO` | `VISA_EMAIL_TO` | Recipient address; empty fallback. |
+
+Do not put real secrets in tracked source files. Environment variables are local
+process inputs, **not an encrypted secret vault**; protect the machine/session.
+The other operational budgets below remain file-configured; only the polling
+bounds join these sixteen environment overrides.
+
+### Process-scoped PowerShell template (recommended)
+
+```powershell
+Copy-Item .\Set-VisaEnvironment.template.ps1 .\Set-VisaEnvironment.local.ps1
+# Edit the .local.ps1 copy: names, exact question texts, dates, email addresses.
+# It prompts for visa password, three answers, and SMTP app password without echo.
+. .\Set-VisaEnvironment.local.ps1
+.\.venv\Scripts\python.exe main.py --check-config
+```
+
+The template has a comment/example for every property. It writes **Process only**,
+as requested: no User/Machine environment registry updates and no administrator
+access. It sets all sixteen values after collecting the inputs. Launch Python
+from this same PowerShell window; closing it discards these settings. Running the
+script in a separate `powershell.exe` process cannot update the parent shell.
+The `.local.ps1` copy is ignored by git. Do not commit credentials in the template.
 
 ### Authentication, identity, and existing appointment
 
@@ -72,40 +120,38 @@ $env:VISA_PASSWORD = [System.Net.NetworkCredential]::new(
     '', (Read-Host 'Visa password' -AsSecureString)).Password
 $env:VISA_APPLICANTS = 'Exact displayed applicant name'
 # Multiple applicants: exact names separated with semicolons.
+$env:VISA_VISA_CLASS = 'B1/B2'
 $env:VISA_EXISTING_APPOINTMENT = '2030-01-15T10:00:00'
 ```
 
 Replace the example timestamp with your **actual current appointment**, in Beijing
 time. It is an identity/safety check, not a target date. The tool expects one
 consular appointment entry; unsupported group/appointment layouts fail closed.
-Set `EXPECTED_VISA_CLASS` to the exact home-page value (`B1/B2` or `B2`).
+Set `VISA_VISA_CLASS` to the exact home-page value (`B1/B2` or `B2`).
 
-Provide the three real question texts and answer references at the top of `main.py`:
+The environment question map has this JSON structure (illustrative values only;
+use the template's masked prompts for real answers):
 
-```python
-SECURITY_ANSWERS = {
-    "Exact question text 1": os.environ.get("VISA_ANSWER_1", ""),
-    "Exact question text 2": os.environ.get("VISA_ANSWER_2", ""),
-    "Exact question text 3": os.environ.get("VISA_ANSWER_3", ""),
-}
+```json
+{"Exact question text 1":"answer1","Exact question text 2":"answer2","Exact question text 3":"answer3"}
 ```
 
-Set those environment variables locally, preferably using the same masked
-`Read-Host` pattern as the password. Use the exact displayed Chinese/English text;
-explicit language aliases are allowed. Whitespace/Unicode normalization is applied,
-but unrelated questions are never guessed. Missing/unknown questions stop the run.
+Use exact displayed Chinese/English question text; explicit language aliases are
+allowed. JSON supports Unicode and escaped quotes/backslashes. Duplicate object
+keys, non-string answers and wrong shapes are rejected. The fallback map can still
+reference individual answer variables such as `VISA_ANSWER_1`; those matter only
+when no `VISA_SECURITY_ANSWERS` object overrides it. Whitespace/Unicode normalization
+is applied to questions, but unrelated questions are never guessed.
+Missing/unknown questions stop the run.
 There is a persisted **local cap of two credential submissions per Beijing day**;
 this is not a claim about the website's undisclosed daily allowance.
 
 ### Preferences and notifications
 
-```python
-PREFERRED_DATE_RANGES = [
-    ("2026-12-01", "2026-12-15"),
-    ("2026-12-22", "2026-12-25"),
-]
-AUTO_BOOKING = False
-DAILY_EMAIL_TIMES = ["08:00", "12:00", "17:00"]
+```powershell
+$env:VISA_PREFERRED_DATE_RANGES = '[["2026-12-01","2026-12-15"],["2026-12-22","2026-12-25"]]'
+$env:VISA_AUTO_BOOKING = 'false'
+$env:VISA_DAILY_EMAIL_TIMES = '["08:00","12:00","17:00"]'
 ```
 
 Replace expired examples before running. Startup rejects reversed/past ranges;
@@ -113,23 +159,39 @@ during monitoring, past days are not chosen. Put the most important range first,
 even if it is later chronologically. Monitor-only mode still sends preferred-date
 emails. There is no selection-based "dry run": disabled booking is truly no-click.
 
+### Gmail sending configuration
+
+Use your full Gmail address and a Google-generated app password, not your usual
+Google password. App passwords require Google 2-Step Verification; account policies
+may make them unavailable. This application uses password-based SMTP, not OAuth.
+If app passwords are unavailable, do not substitute your normal account password.
+
 ```powershell
-$env:VISA_EMAIL_SENDER = 'your-address@example.com'
+$env:VISA_SMTP_HOST = 'smtp.gmail.com'
+$env:VISA_SMTP_PORT = '465'
+$env:VISA_EMAIL_SENDER = 'your.name@gmail.com'
 $env:VISA_EMAIL_TO = 'destination@example.com'
 $env:VISA_SMTP_PASSWORD = [System.Net.NetworkCredential]::new(
-    '', (Read-Host 'SMTP app password' -AsSecureString)).Password
+    '', (Read-Host 'Gmail app password' -AsSecureString)).Password
+.\.venv\Scripts\python.exe main.py --test-email
 ```
 
-Set `SMTP_HOST`/`SMTP_PORT` in `main.py`. The implemented transport is
-**implicit TLS SMTP**, normally port 465, not STARTTLS/port 587. Use your provider's
-SMTP app password. A notification-preflight email must be accepted before the
-browser opens. SMTP acceptance does not guarantee delivery to the inbox.
+Gmail's implicit TLS endpoint is `smtp.gmail.com:465`; STARTTLS/587 is not
+implemented here. Enter the 16-character app password without display-grouping
+spaces. The recipient may be the same Gmail address. The fallback host/port in
+`main.py` already target Gmail; sender, app password and recipient must be supplied.
+A notification-preflight email must be accepted before the browser opens.
+SMTP acceptance does not guarantee delivery to the inbox.
+
+Google references: `https://developers.google.com/workspace/gmail/imap/imap-smtp`
+and `https://support.google.com/accounts/answer/185833`.
 
 ### Operational budgets
 
 | Setting | Default | Meaning |
 |---|---:|---|
-| `POLL_SECONDS` | 1800 | Delay between observations; not a known safe website rate. |
+| `POLL_SECONDS_MIN` | 1800 | Inclusive minimum random delay between observations, in seconds; environment-overridable. |
+| `POLL_SECONDS_MAX` | 3600 | Inclusive maximum random delay, in seconds; environment-overridable. |
 | `BLOCK_COOLDOWN_SECONDS` | 86400 | Local fallback wait after a detected restriction. Longer `Retry-After` values prevail. Not a verified unblock period. |
 | `MAX_RECOVERY_RETRIES` | 3 | Initial failure plus at most three recovery cycles, persisted across restarts. |
 | `MAX_CHECKS_PER_RUN` | 24 | Maximum successful checks for this persistent task. Despite the historical name, restarts do not reset its count. |
@@ -138,6 +200,31 @@ browser opens. SMTP acceptance does not guarantee delivery to the inbox.
 | `MANUAL_VERIFICATION_TIMEOUT_SECONDS` | 900 | Bounded manual handoff; automatic notification, pause, then resume or stop. |
 | `PAGE_TIMEOUT_SECONDS` | 45 | Normal page/request wait. |
 | `QUEUE_TIMEOUT_SECONDS` | 1800 | Maximum wait for the site's own virtual queue. |
+
+After each completed observation, if another check is permitted, the scheduler
+samples a fresh integer uniformly from `[POLL_SECONDS_MIN, POLL_SECONDS_MAX]`.
+Both endpoints are possible and consecutive samples may repeat. The default is
+30-60 minutes. The delay starts after that cycle's work finishes; time between
+observation starts also includes the work itself. Empty results and monitor-only
+checks use the same policy.
+
+```powershell
+$env:VISA_POLL_SECONDS_MIN = '1800'
+$env:VISA_POLL_SECONDS_MAX = '3600'
+```
+
+Both bounds must be positive integers and minimum must not exceed maximum.
+Set both to `1800` for the previous fixed 30-minute delay. `POLL_SECONDS` has been
+removed; update existing local setup-script copies to use the two new variables.
+An unset bound uses its own `main.py` fallback; an empty/invalid value is rejected.
+No persisted task state needs migration or removal.
+
+Each selected delay is recorded in `EventLog` as `POLL_WAIT`, with `delay_seconds`,
+`minimum_seconds`, and `maximum_seconds`. No polling delay is sampled after a
+submission or once the check budget is exhausted. Restriction cooldowns,
+`Retry-After`, verification deadlines, the 90-second result window, and the three
+Beijing daily email times are **not randomized**. Heartbeat logging/email work
+continues during polling waits. Randomization is not a guarantee against blocking.
 
 Detected page-view warnings are treated as restrictions. A cooldown performs no
 scheduling queries; it does not erase server-side account state. A recovery cycle
@@ -157,7 +244,8 @@ requests at HTTP level. The local check/login budgets can stop the task earlier.
 The normal command first validates configuration, acquires the project instance
 lock, checks durable stop/latch state, and tests email delivery.
 
-Start with `AUTO_BOOKING = False`. Set it to `True` only after reviewing the
+Start with `VISA_AUTO_BOOKING = 'false'` (the file fallback is also `False`).
+Set the environment value to `'true'` only after reviewing the
 configuration, permission to automate, and the risks/limits above. No live booking
 is needed to run the included tests.
 
@@ -266,6 +354,11 @@ separate UC smoke test opens only the default blank page and verifies owned-work
 teardown. Tests cover range gaps/priority, all question pairs, nonpreferred no-click,
 empty results, all returned months, actual slot times, stale contexts, at-most-once
 dispatch/restart, 90-second outcomes, retry caps, mail failure, and date rotation.
+Configuration tests also cover all sixteen environment overrides and missing-value
+fallbacks, strict booleans/JSON, secret-safe errors, and a disposable PowerShell
+child with mocked secret prompts that checks Process-only scope and Python inheritance.
+Polling tests cover inclusive bounds, fresh sampling between checks, equal-bound
+fixed waits, invalid bounds, logged delays, and no extra/randomized terminal or safety waits.
 
 Live account login, actual Cloudflare acceptance, quota consumption, and a real
 rescheduling transaction have **not** been validated. Site markup/response changes

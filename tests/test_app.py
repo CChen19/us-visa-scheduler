@@ -1,6 +1,8 @@
 import unittest
 import smtplib
+import json
 from dataclasses import replace
+from unittest.mock import call, patch
 
 from test_core import RuntimeTest
 from visa_tool.app import Scheduler
@@ -67,6 +69,34 @@ class SchedulerTests(RuntimeTest):
         self.assertEqual(created, [])
         self.assertTrue(self.store.data["stopped"])
 
+    def test_fresh_random_delay_between_observations_includes_both_bounds(self):
+        browser = FakeBrowser()
+        scheduler = self.scheduler(browser, max_checks=3, poll_seconds_min=2, poll_seconds_max=5)
+        with patch("visa_tool.app.random.randint", side_effect=[2, 5]) as sample:
+            self.assertEqual(scheduler.run(), "stopped")
+        self.assertEqual(sample.call_args_list, [call(2, 5), call(2, 5)])
+        self.assertEqual(self.clock.elapsed, 7)
+        self.assertEqual(sum(method == "load_dates" for method, _ in browser.calls), 3)
+        records = [
+            json.loads(line)
+            for path in (self.config.root / "logs").glob("EventLog_*.jsonl")
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        waits = [record for record in records if record["action"] == "POLL_WAIT"]
+        self.assertEqual([record["delay_seconds"] for record in waits], [2, 5])
+        self.assertTrue(all(record["minimum_seconds"] == 2 and record["maximum_seconds"] == 5 for record in waits))
+
+    def test_equal_bounds_produce_fixed_delay_and_no_terminal_wait(self):
+        scheduler = self.scheduler(FakeBrowser(), max_checks=3, poll_seconds_min=4, poll_seconds_max=4)
+        self.assertEqual(scheduler.run(), "stopped")
+        self.assertEqual(self.clock.elapsed, 8)
+
+    def test_no_random_wait_when_no_next_observation(self):
+        with patch("visa_tool.app.random.randint") as sample:
+            self.assertEqual(self.scheduler(FakeBrowser(), max_checks=1).run(), "stopped")
+        sample.assert_not_called()
+        self.assertEqual(self.clock.elapsed, 0)
+
     def test_no_preferred_days_never_clicks(self):
         browser = FakeBrowser()
         browser.days = ["2026-12-16", "2027-01-01"]
@@ -84,12 +114,14 @@ class SchedulerTests(RuntimeTest):
 
     def test_success_waits_90_seconds_and_stops_once(self):
         browser = FakeBrowser()
-        result = self.scheduler(browser, auto_booking=True).run()
+        with patch("visa_tool.app.random.randint") as sample:
+            result = self.scheduler(browser, auto_booking=True).run()
+        sample.assert_not_called()
         self.assertEqual(result, "success")
         submissions = [args for method, args in browser.calls if method == "submit"]
         self.assertEqual(len(submissions), 1)
         self.assertEqual(submissions[0][0].day, "2026-12-23")
-        self.assertGreaterEqual(self.clock.elapsed, 90)
+        self.assertEqual(self.clock.elapsed, 90)
         self.assertTrue(self.store.attempt_path.exists())
         self.assertTrue(browser.closed)
         self.assertTrue(any("SUCCESS" in subject for subject, _ in self.messages))
@@ -117,11 +149,13 @@ class SchedulerTests(RuntimeTest):
     def test_initial_block_plus_three_retries_then_persistent_stop(self):
         browser = FakeBrowser()
         browser.blocks = 10
-        result = self.scheduler(browser).run()
+        with patch("visa_tool.app.random.randint") as sample:
+            result = self.scheduler(browser).run()
+        sample.assert_not_called()
         self.assertEqual(result, "error")
         self.assertEqual(sum(method == "load_dates" for method, _ in browser.calls), 4)
         self.assertEqual(self.store.data["recovery_retries"], 3)
-        self.assertGreaterEqual(self.clock.elapsed, 9)
+        self.assertEqual(self.clock.elapsed, 9)
         self.assertTrue(self.store.data["stopped"])
         self.assertTrue(browser.closed)
 

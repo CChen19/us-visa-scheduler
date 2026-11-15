@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 import uuid
 from datetime import date
 
@@ -245,7 +246,12 @@ class Scheduler:
                     )
                     self.store.save()
                     continue
-                runtime.wait(self.config.poll_seconds)
+                if self.store.data["checks"] < self.config.max_checks:
+                    delay = random.randint(self.config.poll_seconds_min, self.config.poll_seconds_max)
+                    self.logs.event("POLL_WAIT", delay_seconds=delay,
+                                    minimum_seconds=self.config.poll_seconds_min,
+                                    maximum_seconds=self.config.poll_seconds_max)
+                    runtime.wait(delay)
             self.store.stop("check_budget_exhausted")
             runtime.notify("check-budget", "Monitoring stopped",
                            "Configured total check budget reached. No automatic restart is permitted.")

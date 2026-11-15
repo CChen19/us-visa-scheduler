@@ -5,3 +5,9 @@ dist/
 build/
 .env
 *.log
+logs/
+.state/
+.venv/
+latest_logs/
+archived_logs/
+downloaded_files/
